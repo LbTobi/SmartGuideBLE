@@ -23,7 +23,7 @@
 #define BRUSHING_TIME_CHARACTERISTIC_UUID "A0F0FF08-5047-4D53-8208-4F72616C2D42"
 
 #define uS_TO_S_FACTOR 1000000ULL // Conversion factor for micro seconds to seconds
-#define TIME_TO_SLEEP 5           // Time ESP32 will go to sleep (in seconds)
+#define TIME_TO_SLEEP 10          // Time ESP32 will go to sleep (in seconds)
 
 void drawSegment(int x, int y);
 void drawNumber(int x, int y, int number);
@@ -201,12 +201,9 @@ void displayTime(int hours, int minutes)
 
 void updateSevenSegmentClock()
 {
-  epd_clear_area_cycles(epd_full_screen(), 2, 50);
-  if (minutes > 0 || seconds > 0)
-  {
-    displayTime(minutes, seconds);
-    memset(framebuffer, 0xFF, EPD_WIDTH * EPD_HEIGHT / 2); // clear the framebuffer
-  }
+  epd_clear_area_cycles(epd_full_screen(), 1, 50);
+  displayTime(minutes, seconds);
+  memset(framebuffer, 0xFF, EPD_WIDTH * EPD_HEIGHT / 2); // clear the framebuffer
 }
 
 void resetClock()
@@ -228,7 +225,7 @@ void handleDisconnect()
   // Serial.println("Disconnected from the BLE Server.");
   dontScan = false;
   resetClock();
-  epd_clear();
+  delay(5000);
   epd_clear();
   // epd_clear_area_cycles(epd_full_screen(), 16, 50);
   delay(1000);
@@ -272,13 +269,21 @@ void connectToServer()
     while (value.length() > 0)
     {
       // the characteristic value is stored as raw bytes data: 2 bytes [min, sec] so we need to convert it to int
-      minutes = (int)value[0];
-      seconds = (int)value[1];
+      const int newMinutes = (int)value[0];
+      const int newSeconds = (int)value[1];
+
+      // only update the display if the value has changed
+      if (seconds != newSeconds || minutes != newMinutes)
+      {
+        seconds = newSeconds;
+        minutes = newMinutes;
+        updateSevenSegmentClock();
+      }
+
       // Serial.print("The characteristic value was: ");
       // Serial.print(minutes);
       // Serial.print(":");
       // Serial.println(seconds);
-      updateSevenSegmentClock();
       delay(500);
       value = pRemoteCharacteristic->readValue();
     }
