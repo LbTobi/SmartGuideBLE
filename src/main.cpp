@@ -77,6 +77,7 @@ void setup()
       ;
   }
   memset(framebuffer, 0xFF, EPD_WIDTH * EPD_HEIGHT / 2);
+  setCpuFrequencyMhz(160);
 
   BLEDevice::init("");
   pBLEScan = BLEDevice::getScan(); // create new scan
@@ -284,7 +285,7 @@ void connectToServer()
       // Serial.print(minutes);
       // Serial.print(":");
       // Serial.println(seconds);
-      delay(500);
+      delay(250);
       value = pRemoteCharacteristic->readValue();
     }
     handleDisconnect();
