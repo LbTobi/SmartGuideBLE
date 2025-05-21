@@ -22,12 +22,17 @@
 #define SERVICE_UUID "A0F0FF00-5047-4D53-8208-4F72616C2D42"
 #define BRUSHING_TIME_CHARACTERISTIC_UUID "A0F0FF08-5047-4D53-8208-4F72616C2D42"
 
+#define uS_TO_S_FACTOR 1000000ULL // Conversion factor for micro seconds to seconds
+#define TIME_TO_SLEEP 5           // Time ESP32 will go to sleep (in seconds)
+
 void drawSegment(int x, int y);
 void drawNumber(int x, int y, int number);
 void drawColon(int x, int y);
 void displayTime(int hours, int minutes);
 void updateSevenSegmentClock();
 void resetClock();
+void handleDisconnect();
+void initializeDisplay();
 
 void connectToServer();
 
@@ -36,7 +41,7 @@ int seconds = 0;
 int minutes = 0;
 // BLE
 bool dontScan = false;
-const int scanTime = 5; // in seconds
+const int scanTime = 1; // in seconds
 BLEScan *pBLEScan;
 BLEClient *pClient = BLEDevice::createClient();
 BLEAdvertisedDevice *pAdvertisedDevice;
@@ -45,14 +50,14 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks
 {
   void onResult(BLEAdvertisedDevice advertisedDevice)
   {
-    Serial.printf("Advertised Device: %s \n", advertisedDevice.toString().c_str());
+    // Serial.printf("Advertised Device: %s \n", advertisedDevice.toString().c_str());
     if (advertisedDevice.haveServiceUUID())
     {
       BLEUUID serviceUUID = advertisedDevice.getServiceUUID();
       if (serviceUUID.equals(BLEUUID(ADVERTISED_SERVICE_UUID)))
       {
         pAdvertisedDevice = new BLEAdvertisedDevice(advertisedDevice);
-        Serial.println("Found our device! Connecting now.");
+        // Serial.println("Found our device! Connecting now.");
         dontScan = true;
         BLEDevice::getScan()->stop();
       }
@@ -62,20 +67,16 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks
 
 void setup()
 {
-  esp_log_level_set("*", ESP_LOG_VERBOSE); // Enable verbose logging
-  Serial.begin(115200);
-  delay(1000);
+  esp_log_level_set("*", ESP_LOG_ERROR); // Enable verbose logging
+  // Serial.begin(115200);
   framebuffer = (uint8_t *)ps_calloc(sizeof(uint8_t), EPD_WIDTH * EPD_HEIGHT / 2);
   if (!framebuffer)
   {
-    Serial.println("alloc memory failed !!!");
+    // Serial.println("alloc memory failed !!!");
     while (1)
       ;
   }
   memset(framebuffer, 0xFF, EPD_WIDTH * EPD_HEIGHT / 2);
-  epd_init();
-  epd_poweron();
-  epd_clear();
 
   BLEDevice::init("");
   pBLEScan = BLEDevice::getScan(); // create new scan
@@ -84,36 +85,38 @@ void setup()
   pBLEScan->setInterval(100);
   pBLEScan->setWindow(99); // less or equal setInterval value
 
-  Serial.println("Hello World!");
-  delay(100);
+  // Serial.println("Hello World!");
+  esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
 }
 
 void loop()
 {
-  Serial.println("looping");
-  if (!dontScan)
+  // Serial.println("looping");
+  BLEScanResults foundDevices = pBLEScan->start(scanTime, false);
+
+  if (dontScan)
   {
-    pBLEScan->clearResults(); // delete results fromBLEScan buffer to release memory
-    Serial.println("Devices found: ");
-    BLEScanResults foundDevices = pBLEScan->start(scanTime, false);
-
-    Serial.println("Scan done!");
-    if (dontScan)
-    {
-      connectToServer();
-    }
-
-    delay(1000);
+    connectToServer();
   }
-  delay(1000);
+  else
+  {
+    // Go to deep sleep
+    esp_deep_sleep_start();
+  }
 
   // read batt_pin
-  uint16_t batt = analogReadMilliVolts(BATT_PIN);
+  /* uint16_t batt = analogReadMilliVolts(BATT_PIN);
   Serial.print("Battery level: ");
-  Serial.println(batt);
+  Serial.println(batt); */
 }
 
 // put function definitions here:
+void initializeDisplay()
+{
+  epd_init();
+  epd_poweron();
+}
+
 void drawSegment(int x, int y, bool horizontal, bool on)
 {
   if (on)
@@ -127,7 +130,7 @@ void drawSegment(int x, int y, bool horizontal, bool on)
       epd_fill_rect(x, y, SEGMENT_WIDTH, VERTICAL_SEGMENT_LENGTH, 0, framebuffer);
     }
   }
-  else
+  /* else
   {
     if (horizontal)
     {
@@ -137,7 +140,7 @@ void drawSegment(int x, int y, bool horizontal, bool on)
     {
       epd_draw_rect(x, y, SEGMENT_WIDTH, VERTICAL_SEGMENT_LENGTH, 255, framebuffer);
     }
-  }
+  } */
 }
 
 void drawNumber(int x, int y, int number)
@@ -198,7 +201,7 @@ void displayTime(int hours, int minutes)
 
 void updateSevenSegmentClock()
 {
-  epd_clear();
+  epd_clear_area_cycles(epd_full_screen(), 2, 50);
   if (minutes > 0 || seconds > 0)
   {
     displayTime(minutes, seconds);
@@ -210,7 +213,26 @@ void resetClock()
 {
   seconds = 0;
   minutes = 0;
-  updateSevenSegmentClock();
+}
+
+void enterLightSleep()
+{
+  // Serial.println("Entering light sleep");
+  esp_light_sleep_start();
+  // Serial.println("Waking up from light sleep");
+}
+
+void handleDisconnect()
+{
+  pClient->disconnect();
+  // Serial.println("Disconnected from the BLE Server.");
+  dontScan = false;
+  resetClock();
+  epd_clear();
+  epd_clear();
+  // epd_clear_area_cycles(epd_full_screen(), 16, 50);
+  delay(1000);
+  epd_poweroff();
 }
 
 void connectToServer()
@@ -218,31 +240,29 @@ void connectToServer()
   bool con = pClient->connect(pAdvertisedDevice);
   if (!con)
   {
-    Serial.println("Failed to connect.");
+    // Serial.println("Failed to connect.");
     dontScan = false;
     resetClock();
     return;
   }
-  Serial.println("We are now connected to the BLE Server.");
+  // Serial.println("We are now connected to the BLE Server.");
+
+  initializeDisplay();
 
   BLERemoteService *pRemoteService = pClient->getService(SERVICE_UUID);
   if (pRemoteService == nullptr)
   {
-    Serial.print("Failed to find our service UUID: ");
-    Serial.println(SERVICE_UUID);
-    pClient->disconnect();
-    dontScan = false;
-    resetClock();
+    // Serial.print("Failed to find our service UUID: ");
+    // Serial.println(SERVICE_UUID);
+    handleDisconnect();
     return;
   }
   BLERemoteCharacteristic *pRemoteCharacteristic = pRemoteService->getCharacteristic(BRUSHING_TIME_CHARACTERISTIC_UUID);
   if (pRemoteCharacteristic == nullptr)
   {
-    Serial.print("Failed to find our characteristic UUID: ");
-    Serial.println(BRUSHING_TIME_CHARACTERISTIC_UUID);
-    pClient->disconnect();
-    dontScan = false;
-    resetClock();
+    // Serial.print("Failed to find our characteristic UUID: ");
+    // Serial.println(BRUSHING_TIME_CHARACTERISTIC_UUID);
+    handleDisconnect();
     return;
   }
   if (pRemoteCharacteristic->canRead())
@@ -254,23 +274,19 @@ void connectToServer()
       // the characteristic value is stored as raw bytes data: 2 bytes [min, sec] so we need to convert it to int
       minutes = (int)value[0];
       seconds = (int)value[1];
-      Serial.print("The characteristic value was: ");
-      Serial.print(minutes);
-      Serial.print(":");
-      Serial.println(seconds);
+      // Serial.print("The characteristic value was: ");
+      // Serial.print(minutes);
+      // Serial.print(":");
+      // Serial.println(seconds);
       updateSevenSegmentClock();
       delay(500);
       value = pRemoteCharacteristic->readValue();
     }
-    pClient->disconnect();
-    dontScan = false;
-    resetClock();
+    handleDisconnect();
   }
   else
   {
-    Serial.println("The characteristic can't be read.");
-    pClient->disconnect();
-    dontScan = false;
-    resetClock();
+    // Serial.println("The characteristic can't be read.");
+    handleDisconnect();
   }
 }
