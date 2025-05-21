@@ -23,7 +23,7 @@
 #define BRUSHING_TIME_CHARACTERISTIC_UUID "A0F0FF08-5047-4D53-8208-4F72616C2D42"
 
 #define uS_TO_S_FACTOR 1000000ULL // Conversion factor for micro seconds to seconds
-#define TIME_TO_SLEEP 10          // Time ESP32 will go to sleep (in seconds)
+#define TIME_TO_SLEEP 8           // Time ESP32 will go to sleep (in seconds)
 
 void drawSegment(int x, int y);
 void drawNumber(int x, int y, int number);
@@ -41,7 +41,7 @@ int seconds = 0;
 int minutes = 0;
 // BLE
 bool dontScan = false;
-const int scanTime = 1; // in seconds
+const int scanTime = 2; // in seconds
 BLEScan *pBLEScan;
 BLEClient *pClient = BLEDevice::createClient();
 BLEAdvertisedDevice *pAdvertisedDevice;
@@ -82,9 +82,9 @@ void setup()
   BLEDevice::init("");
   pBLEScan = BLEDevice::getScan(); // create new scan
   pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
-  pBLEScan->setActiveScan(true); // active scan uses more power, but get results faster
-  pBLEScan->setInterval(100);
-  pBLEScan->setWindow(99); // less or equal setInterval value
+  pBLEScan->setActiveScan(false); // active scan uses more power, but get results faster
+  pBLEScan->setInterval(200);
+  // pBLEScan->setWindow(99); // less or equal setInterval value, only for active scan
 
   // Serial.println("Hello World!");
   esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
@@ -200,8 +200,10 @@ void displayTime(int hours, int minutes)
   epd_draw_grayscale_image(epd_full_screen(), framebuffer);
 }
 
-void updateSevenSegmentClock()
+void updateSevenSegmentClock(int newMinutes, int newSeconds)
 {
+  seconds = newSeconds;
+  minutes = newMinutes;
   epd_clear_area_cycles(epd_full_screen(), 1, 50);
   displayTime(minutes, seconds);
   memset(framebuffer, 0xFF, EPD_WIDTH * EPD_HEIGHT / 2); // clear the framebuffer
@@ -266,6 +268,8 @@ void connectToServer()
   if (pRemoteCharacteristic->canRead())
   {
     std::string value = pRemoteCharacteristic->readValue();
+    updateSevenSegmentClock((int)value[0], (int)value[1]);
+
     // while the value is not empty keep reading and displaying
     while (value.length() > 0)
     {
@@ -276,16 +280,14 @@ void connectToServer()
       // only update the display if the value has changed
       if (seconds != newSeconds || minutes != newMinutes)
       {
-        seconds = newSeconds;
-        minutes = newMinutes;
-        updateSevenSegmentClock();
+        updateSevenSegmentClock(newMinutes, newSeconds);
       }
 
       // Serial.print("The characteristic value was: ");
       // Serial.print(minutes);
       // Serial.print(":");
       // Serial.println(seconds);
-      delay(250);
+      delay(200);
       value = pRemoteCharacteristic->readValue();
     }
     handleDisconnect();
